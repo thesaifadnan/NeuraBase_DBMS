@@ -9,7 +9,7 @@ using namespace std;
 enum class TokenType {  STRING, SYMBOL, IDENTIFIER, KEYWORD, OPERATOR, BOOL, NUMBER };
 
 enum class Keyword {
-    CREATE, TABLE, INSERT, UPDATE, SHOW, INTO,  SELECT, FROM, WHERE, VALUES, SET, TABLES, AND
+    CREATE, TABLE, INSERT, UPDATE, DELETE, SHOW, INTO,  SELECT, FROM, WHERE, VALUES, SET, TABLES, AND
 };
 
 struct Token {
@@ -41,12 +41,19 @@ struct updateQuery {
     std::vector<Condition> assignments;
     std::vector<Condition> whereClause;
 };
+
+struct deleteQuery {
+    std::string operation;
+    std::string tableName;
+    std::vector<Condition> whereClause;
+};
+
 // show tables;
 struct showQuery{
     std::string operation;
 };
 
-using AST = std::variant<createQuery, insertQuery, selectQuery, updateQuery, showQuery>;
+using AST = std::variant<createQuery, insertQuery, selectQuery, updateQuery, deleteQuery, showQuery>;
 
 //ignore the return types of the parser functions
 class Parser{
@@ -57,6 +64,7 @@ class Parser{
         static selectQuery parseSelect(const std::vector<Token>& tokens);
         static insertQuery parseInsert(std::vector<Token>& tokens);
         static updateQuery parseUpdate(const std::vector<Token>& tokens);
+        static deleteQuery parseDelete(const std::vector<Token>& tokens);
         static std::string tokenToStr(TokenType type);
         static showQuery parseShow(const std::vector<Token>& tokens);
 };

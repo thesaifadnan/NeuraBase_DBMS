@@ -56,7 +56,8 @@ Keyword strToKeyword(const std::string& word) {
         {"SET", Keyword::SET},
         {"SHOW", Keyword::SHOW},
         {"TABLES", Keyword::TABLES},
-        {"AND", Keyword::AND}
+        {"AND", Keyword::AND},
+        {"DELETE", Keyword::DELETE}
     };
 
     auto it = keywordMap.find(word);
@@ -494,6 +495,73 @@ updateQuery Parser::parseUpdate(const std::vector<Token>& tokens){
 
 }
 
+// Parser code for DELETE query
+deleteQuery Parser::parseDelete(const std::vector<Token>& tokens) {
+    deleteQuery q;
+    size_t i = 0;
+    size_t len = tokens.size();
+
+    if (tokens[i].type != TokenType::KEYWORD || tokens[i].value != "DELETE") {
+        throw std::runtime_error("Expected 'DELETE' keyword");
+    }
+    q.operation = tokens[i++].value;
+
+    if (i >= len || tokens[i].value != "FROM" || tokens[i].type != TokenType::KEYWORD) {
+        throw std::runtime_error("Expected 'FROM' keyword after 'DELETE'");
+    }
+    i++;
+
+    if (i >= len || tokens[i].type != TokenType::IDENTIFIER) {
+        throw std::runtime_error("Expected table name after 'FROM'");
+    }
+    q.tableName = tokens[i++].value;
+
+    // optional WHERE clause
+    if (i < len && tokens[i].type == TokenType::KEYWORD && tokens[i].value == "WHERE") {
+        i++;
+        while (i + 2 < len) {
+            if (tokens[i].type != TokenType::IDENTIFIER) {
+                throw std::runtime_error("Expected column name in WHERE clause.");
+            }
+
+            std::string lhs = tokens[i++].value;
+
+            if (tokens[i].type != TokenType::OPERATOR) {
+                throw std::runtime_error("Expected operator in WHERE clause.");
+            }
+
+            std::string op = tokens[i++].value;
+
+            if (tokens[i].type != TokenType::STRING &&
+                tokens[i].type != TokenType::NUMBER &&
+                tokens[i].type != TokenType::BOOL) {
+                throw std::runtime_error("Expected literal value in WHERE clause.");
+            }
+
+            std::string rhs = tokens[i++].value;
+
+            q.whereClause.push_back({lhs, op, rhs});
+
+            if (i < len && tokens[i].type == TokenType::SYMBOL && tokens[i].value == ";") {
+                break;
+            }
+
+            if (i < len && tokens[i].value == "AND") {
+                i++;
+                continue;
+            }
+
+            break;
+        }
+    }
+
+    if (i >= len || tokens[i].value != ";" || tokens[i].type != TokenType::SYMBOL) {
+        throw std::runtime_error("Expected ';' at the end of DELETE statement.");
+    }
+
+    return q;
+}
+
 //just for tthe testing
 ostream& operator<<(ostream& os, TokenType type) {
     switch (type) {
@@ -539,12 +607,12 @@ AST Parser::parser(std::string& query) {
 
     std::string command = tokens[0].value;
 
-    int i = 0;
-    int len = tokens.size();
-    while(i< len){
-        cout<<tokens[i].type<<" : "<<tokens[i].value<<endl;
-        i++;
-    }
+    // int i = 0;
+    // int len = tokens.size();
+    // while(i< len){
+    //     cout<<tokens[i].type<<" : "<<tokens[i].value<<endl;
+    //     i++;
+    // }
 
     if (command == "CREATE") {
         return parseCreate(tokens);
@@ -555,15 +623,9 @@ AST Parser::parser(std::string& query) {
     } else if (command == "SHOW"){
         return parseShow(tokens);
     } else if( command == "UPDATE" ){
-            updateQuery ast = parseUpdate(tokens);
-            std::cout << "[UPDATE] Table: " << ast.table << "\nAssignments:\n";
-            for (const auto& assign : ast.assignments)
-                std::cout << "  " << assign.column << " = " << assign.value << "\n";
-            std::cout << "Where Clauses:\n";
-            for (const auto& cond : ast.whereClause)
-                std::cout << "  " << cond.column << " " << cond.op << " " << cond.value << "\n";
-
-        return ast;
+        return parseUpdate(tokens);
+    } else if( command == "DELETE" ){
+        return parseDelete(tokens);
     } else {
         throw std::runtime_error("Unsupported command: " + command);
     }

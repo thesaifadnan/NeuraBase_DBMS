@@ -4,9 +4,12 @@
 #include<iostream>
 #include<iomanip>
 #include<sstream>
+#include<cctype>
+#include<algorithm>
 #include"../include/parser.hpp"
 
-// using namespace std;
+using namespace std;
+
 //  -check if the table already exists
 //  -creat tableName.schema file spearate for each one
 //  -create tableNmae.data file separet fro each. one
@@ -294,6 +297,260 @@ void executeShow(const showQuery& q){
 
 }
 
+void executeUpdate(const updateQuery& q) {
+    std::string schemaFile = "../data/catalog/" + q.table + ".schema";
+    std::string dataFile = "../data/tables/" + q.table + ".data";
+
+    // Check if schema and data files exist
+    std::ifstream schemaIn(schemaFile);
+    std::ifstream dataIn(dataFile);
+    if (!schemaIn.is_open() || !dataIn.is_open()) {
+        std::cerr << "Error: Table '" << q.table << "' does not exist." << std::endl;
+        return;
+    }
+
+    // Step 1: Load schema
+    TableSchema schema;
+    schema.tableName = q.table;
+    std::string line;
+    while (getline(schemaIn, line)) {
+        if (line.empty()) continue;
+        size_t pos = line.find(":");
+        std::string colName = line.substr(0, pos);
+        std::string colType = line.substr(pos + 1);
+        FieldType type;
+        if (colType == "NUMBER") type = FieldType::NUMBER;
+        else if (colType == "STRING") type = FieldType::STRING;
+        else if (colType == "BOOL") type = FieldType::BOOL;
+        else type = FieldType::STRING;
+        schema.columns.push_back({colName, type});
+    }
+    schemaIn.close();
+
+    // Step 2: Load all rows into memory
+    std::vector<std::vector<Field>> tableData;
+    while (getline(dataIn, line)) {
+        if (line.empty()) continue;
+        std::vector<Field> row;
+        std::stringstream ss(line);
+        std::string value;
+        int colIndex = 0;
+        while (getline(ss, value, ',')) {
+            if (colIndex >= schema.columns.size()) break;
+            FieldType type = schema.columns[colIndex].type;
+            row.push_back({type, value});
+            colIndex++;
+        }
+        tableData.push_back(row);
+    }
+    dataIn.close();
+
+    // Step 3: Determine WHERE clause (optional)
+    int updatedCount = 0;
+    for (auto& row : tableData) {
+        bool shouldUpdate = true;
+
+        if (!q.whereClause.empty()) {
+            for (const auto& cond : q.whereClause) {
+                int colIndex = -1;
+                for (size_t i = 0; i < schema.columns.size(); ++i) {
+                    if (schema.columns[i].colName == cond.column) {
+                        colIndex = i;
+                        break;
+                    }
+                }
+                if (colIndex == -1) {
+                    std::cerr << "Error: Column '" << cond.column << "' not found." << std::endl;
+                    return;
+                }
+
+                std::string rowVal = row[colIndex].value;
+                std::string condVal = cond.value;
+                bool match = false;
+
+                if (schema.columns[colIndex].type == FieldType::NUMBER) {
+                    int rowNum = stoi(rowVal);
+                    int condNum = stoi(condVal);
+                    if (cond.op == "=") match = (rowNum == condNum);
+                    else if (cond.op == "!=") match = (rowNum != condNum);
+                    else if (cond.op == ">") match = (rowNum > condNum);
+                    else if (cond.op == "<") match = (rowNum < condNum);
+                    else if (cond.op == ">=") match = (rowNum >= condNum);
+                    else if (cond.op == "<=") match = (rowNum <= condNum);
+                } else {
+                    if (cond.op == "=") match = (rowVal == condVal);
+                    else if (cond.op == "!=") match = (rowVal != condVal);
+                }
+
+                if (!match) {
+                    shouldUpdate = false;
+                    break;
+                }
+            }
+        }
+
+        // Step 4: Apply updates if WHERE matches (or no WHERE)
+        if (shouldUpdate) {
+            for (const auto& assign : q.assignments) {
+                int colIndex = -1;
+                for (size_t i = 0; i < schema.columns.size(); ++i) {
+                    if (schema.columns[i].colName == assign.column) {
+                        colIndex = i;
+                        break;
+                    }
+                }
+                if (colIndex == -1) {
+                    std::cerr << "Error: Column '" << assign.column << "' not found." << std::endl;
+                    return;
+                }
+
+                // Basic validation
+                if (schema.columns[colIndex].type == FieldType::NUMBER) {
+                    try { std::stoi(assign.value); } 
+                    catch (...) { std::cerr << "Invalid numeric value: " << assign.value << std::endl; return; }
+                }
+
+                row[colIndex].value = assign.value;
+            }
+            updatedCount++;
+        }
+    }
+
+    // Step 5: Rewrite data file
+    std::ofstream outFile(dataFile, std::ios::trunc);
+    if (!outFile) {
+        std::cerr << "Error writing to data file!" << std::endl;
+        return;
+    }
+
+    for (const auto& row : tableData) {
+        for (size_t i = 0; i < row.size(); ++i) {
+            outFile << row[i].value;
+            if (i < row.size() - 1) outFile << ",";
+        }
+        outFile << std::endl;
+    }
+
+    outFile.close();
+
+    std::cout << updatedCount << " row(s) updated successfully." << std::endl;
+}
+
+void executeDelete(const deleteQuery& q) {
+    std::string schemaFile = "../data/catalog/" + q.tableName + ".schema";
+    std::string dataFile = "../data/tables/" + q.tableName + ".data";
+
+    // Check if schema and data files exist
+    std::ifstream schemaIn(schemaFile);
+    std::ifstream dataIn(dataFile);
+    if (!schemaIn.is_open() || !dataIn.is_open()) {
+        std::cerr << "Error: Table '" << q.tableName << "' does not exist." << std::endl;
+        return;
+    }
+
+    // Load schema
+    TableSchema tableSchema;
+    std::string line;
+    while (getline(schemaIn, line)) {
+        if (line.empty()) continue;
+        size_t pos = line.find(":");
+        std::string colName = line.substr(0, pos);
+        std::string colType = line.substr(pos + 1);
+        FieldType type;
+        if (colType == "NUMBER") type = FieldType::NUMBER;
+        else if (colType == "STRING") type = FieldType::STRING;
+        else if (colType == "BOOL") type = FieldType::BOOL;
+        else type = FieldType::STRING;
+        tableSchema.columns.push_back({colName, type});
+    }
+    schemaIn.close();
+
+    // Load data
+    std::vector<std::vector<Field>> tableData;
+    while (getline(dataIn, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::vector<Field> row;
+        std::string value;
+        int idx = 0;
+        while (getline(ss, value, ',')) {
+            if (idx >= tableSchema.columns.size()) break;
+            row.push_back({tableSchema.columns[idx].type, value});
+            idx++;
+        }
+        tableData.push_back(row);
+    }
+    dataIn.close();
+
+    // Track how many were deleted
+    size_t beforeCount = tableData.size();
+
+    // Apply WHERE (delete matching rows)
+    if (!q.whereClause.empty()) {
+        tableData.erase(std::remove_if(tableData.begin(), tableData.end(),
+            [&](const std::vector<Field>& row) {
+                for (const auto& cond : q.whereClause) {
+                    int colIndex = -1;
+                    for (size_t i = 0; i < tableSchema.columns.size(); ++i) {
+                        if (tableSchema.columns[i].colName == cond.column) {
+                            colIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (colIndex == -1) {
+                        std::cerr << "Error: Column '" << cond.column << "' not found." << std::endl;
+                        return false;
+                    }
+
+                    std::string rowVal = row[colIndex].value;
+                    std::string condVal = cond.value;
+                    bool match = false;
+
+                    if (tableSchema.columns[colIndex].type == FieldType::NUMBER) {
+                        int rowNum = std::stoi(rowVal);
+                        int condNum = std::stoi(condVal);
+                        if (cond.op == "=") match = (rowNum == condNum);
+                        else if (cond.op == "!=") match = (rowNum != condNum);
+                        else if (cond.op == ">") match = (rowNum > condNum);
+                        else if (cond.op == "<") match = (rowNum < condNum);
+                        else if (cond.op == ">=") match = (rowNum >= condNum);
+                        else if (cond.op == "<=") match = (rowNum <= condNum);
+                    } else {
+                        if (cond.op == "=") match = (rowVal == condVal);
+                        else if (cond.op == "!=") match = (rowVal != condVal);
+                    }
+
+                    // 🔥 FIX: if the row matches condition, we return true (delete it)
+                    if (match) return true;
+                }
+                return false; // keep row
+            }), tableData.end());
+    } else {
+        // No WHERE → delete all rows
+        tableData.clear();
+    }
+
+    // Save file
+    std::ofstream out(dataFile, std::ios::trunc);
+    if (!out) {
+        std::cerr << "Error writing to data file!" << std::endl;
+        return;
+    }
+
+    for (const auto& row : tableData) {
+        for (size_t i = 0; i < row.size(); ++i) {
+            out << row[i].value;
+            if (i < row.size() - 1) out << ",";
+        }
+        out << "\n";
+    }
+
+    out.close();
+
+    size_t deletedCount = beforeCount - tableData.size();
+    std::cout << deletedCount << " row(s) deleted successfully." << std::endl;
+}
 
 
 void executor(std::string& query) {
@@ -310,26 +567,51 @@ void executor(std::string& query) {
             executeSelect(q);
         } else if constexpr (std::is_same_v<T, showQuery>) {
             executeShow(q);
+        } else if constexpr (std::is_same_v<T, deleteQuery>) {
+            executeDelete(q);
         } else {
             std::cerr << "Unknown query type in executor.\n";
         }
     }, ast);
 }
 
-
+static inline std::string trim(const std::string& s) {
+    auto start = s.find_first_not_of(" \t\n\r");
+    auto end = s.find_last_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    return s.substr(start, end - start + 1);
+}
 
 int main() {
-    cout<<"NeuraBase> ";
+    cout << "NeuraBase> ";
     string query;
-    while(query != "exit" || query != "EXIT"){
-        getline(cin,query);
+
+    while (true) {
+        getline(cin, query);
+        query = trim(query);
+
+        // exit condition (case-insensitive)
+        string lowerQuery = query;
+        transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+        if (lowerQuery == "exit" || lowerQuery == "quit" || lowerQuery == "bye") {
+            cout << "Shutting down NeuraBase..." << endl;
+            break;
+        }
+
+        //skip empty inputs
+        if (query.empty()) {
+            cout << "NeuraBase> ";
+            continue;
+        }
+
         try {
             executor(query);
         } catch (const std::exception& e) {
-            std::cerr << "[ERROR] " << e.what() << "\n";
+            cerr << "[ERROR] " << e.what() << endl;
         }
-        cout<<"NeuraBase> ";
+
+        cout << "NeuraBase> ";
     }
-    
+
     return 0;
 }
