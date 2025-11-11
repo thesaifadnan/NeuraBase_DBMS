@@ -1,2 +1,7 @@
 id:NUMBER
 name:STRING
+position:STRING
+salary:INT
+age:INT
+city:STRING
+vaccinated:BOOL

@@ -6,6 +6,7 @@
 #include<sstream>
 #include<cctype>
 #include<algorithm>
+#include "../include/linenoise.h"
 #include"../include/parser.hpp"
 
 using namespace std;
@@ -583,35 +584,21 @@ static inline std::string trim(const std::string& s) {
 }
 
 int main() {
-    cout << "NeuraBase> ";
-    string query;
-
     while (true) {
-        getline(cin, query);
-        query = trim(query);
+        char* input = linenoise("NeuraBase> ");
+        if (!input) break;
+        std::string query(input);
+        free(input);
 
-        // exit condition (case-insensitive)
-        string lowerQuery = query;
-        transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
-        if (lowerQuery == "exit" || lowerQuery == "quit" || lowerQuery == "bye") {
-            cout << "Shutting down NeuraBase..." << endl;
-            break;
-        }
+        if (query.empty()) continue;
 
-        //skip empty inputs
-        if (query.empty()) {
-            cout << "NeuraBase> ";
-            continue;
-        }
+        linenoiseHistoryAdd(query.c_str()); // save history like to scroll through the previous typed commands
 
-        try {
-            executor(query);
-        } catch (const std::exception& e) {
-            cerr << "[ERROR] " << e.what() << endl;
-        }
+        std::string lower = query;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        if (lower == "exit") break;
 
-        cout << "NeuraBase> ";
+        executor(query);
     }
-
     return 0;
 }
